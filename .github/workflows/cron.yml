@@ -1,0 +1,24 @@
+name: Whatsapp Bot Cron Job
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install Dependencies
+        run: npm install
+      - name: Run Cron Job
+        run: node index.js
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
