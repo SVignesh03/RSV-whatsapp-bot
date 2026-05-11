@@ -1,3 +1,4 @@
+require("dotenv").config();
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -29,6 +30,12 @@ const User =
         name: { type: String, required: true },
         phone: { type: String },
         role: { type: String },
+        admissionNumber: {
+          type: String,
+          sparse: true,
+          unique: true,
+          trim: true,
+        },
       },
       { timestamps: true },
     ),
@@ -49,10 +56,11 @@ const Payment =
         paymentStatus: { type: String, default: "pending" },
         dueDate: { type: Date },
         planName: { type: String },
+        balanceAmount: { type: Number },
       },
       { timestamps: true },
     ),
-    "Payment",
+    "payments",
   );
 
 async function run() {
@@ -77,52 +85,64 @@ async function run() {
   sock.ev.on("connection.update", async (update) => {
     const { connection } = update;
     if (connection === "open") {
-      console.log("WhatsApp is connected!");
-      const today = moment().startOf("day").toDate();
+      console.log("✅ WhatsApp Connected! Preparing to send reminders...");
+
+      const today = moment().startOf("day");
       const sevenDaysFromNow = moment().add(7, "days").endOf("day").toDate();
-      const expiringSoon = await Payment.find({
-        dueDate: {
-          $gte: today,
-          $lte: sevenDaysFromNow,
-        },
-        paymentStatus: { $ne: "paid" },
-      }).populate("memberId");
-      console.log(
-        `Found ${expiringSoon.length} expiring soon payments to remind!`,
-      );
 
-      for (const payment of expiringSoon) {
-        const member = payment.memberId;
+      try {
+        const rawPayments = await Payment.find({
+          dueDate: { $lte: sevenDaysFromNow },
+        }).populate("memberId");
 
-        if (!member || !member.phone) {
-          console.log(
-            `Member ${member?.name || "Unknown"} has no phone number! Skipping...`,
-          );
-          continue;
-        }
+        const dashboardMembers = rawPayments.filter((p) => {
+          if (!p.dueDate || !p.memberId?.phone) return false;
+          const daysLeft = moment(p.dueDate).startOf("day").diff(today, "days");
+          return daysLeft <= 7 && daysLeft >= -10;
+        });
 
-        const daysRemaining = moment(payment.dueDate)
-          .startOf("day")
-          .diff(moment().startOf("day"), "days");
+        console.log(`🚀 Found ${dashboardMembers.length} members to notify.`);
 
-        if ([7, 3, 0].includes(daysRemaining)) {
-          const cleanPhone = member.phone.replace(/\D/g, "");
+        for (const [index, p] of dashboardMembers.entries()) {
+          const m = p.memberId;
+          const daysLeft = moment(p.dueDate).startOf("day").diff(today, "days");
+
+          const cleanPhone = m.phone.replace(/\D/g, "");
           const jid = `${cleanPhone}@s.whatsapp.net`;
-          const timeLabel =
-            daysRemaining === 0 ? "Today" : `in ${daysRemaining} days`;
-          const message = `Hi ${member.name}, your ${payment.planName || "Membership"} expires ${timeLabel}. Don't miss your workout! Please ignore if already renewed.`;
+
+          let timeLabel = "";
+          if (daysLeft === 0) timeLabel = "*Today*";
+          else if (daysLeft > 0) timeLabel = `in *${daysLeft} days*`;
+          else timeLabel = `*${Math.abs(daysLeft)} days ago*`;
+
+          const statusWord = daysLeft < 0 ? "expired" : "expires";
+
+          const message = `*RSV Fitness Studio Reminder* 🏋️‍♂️\n\nHi *${m.name}*,\n\nYour gym membership ${statusWord} ${timeLabel} (${moment(p.dueDate).format("DD MMM")}).\n\nTo ensure your workout routine is not interrupted, please visit the front desk for renewal.\n\n_ID: #${m.admissionNumber || "N/A"}_\n_Please ignore if already paid._`;
 
           try {
+            console.log(
+              `[${index + 1}/${dashboardMembers.length}] Sending to ${m.name}...`,
+            );
+
             await sock.sendMessage(jid, { text: message });
-            console.log(`Sent reminder to ${member.name} (${member.phone})`);
-          } catch (e) {
-            console.error(`Error sending message to ${member.name}`, e);
+
+            console.log(`✅ Message delivered to ${m.name}`);
+
+            const waitTime = Math.floor(Math.random() * 15001) + 15000;
+            if (index < dashboardMembers.length - 1) {
+              console.log(`⏳ Waiting ${waitTime / 1000}s for next message...`);
+              await delay(waitTime);
+            }
+          } catch (sendError) {
+            console.error(`❌ Failed for ${m.name}:`, sendError.message);
           }
-          const randomdelay = Math.floor(Math.random() * 15001) + 15000;
-          await delay(randomdelay);
         }
+
+        console.log("\n✅ ALL REMINDERS PROCESSED SUCCESSFULLY!");
+      } catch (err) {
+        console.error("❌ CRITICAL ERROR:", err);
       }
-      console.log("Done!");
+
       await delay(5000);
       process.exit(0);
     }
