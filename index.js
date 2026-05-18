@@ -91,9 +91,30 @@ async function run() {
       const sevenDaysFromNow = moment().add(7, "days").endOf("day").toDate();
 
       try {
-        const rawPayments = await Payment.find({
-          dueDate: { $lte: sevenDaysFromNow },
-        }).populate("memberId");
+        const rawPayments = await Payment.aggregate([
+          { $sort: { dueDate: -1 } },
+          {
+            $group: {
+              _id: "$memberId",
+              latestPayment: { $first: "$$ROOT" },           
+            }
+          },
+          { $replaceRoot: { newRoot: "$latestPayment" } },
+          {
+            $lookup: {
+              from: "User",
+              localField: "memberId",
+              foreignField: "_id",
+              as: "memberId",
+            },
+          },
+          {
+            $unwind: {
+              path: "$memberId",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+        ]);
 
         const dashboardMembers = rawPayments.filter((p) => {
           if (!p.dueDate || !p.memberId?.phone) return false;
@@ -126,7 +147,7 @@ async function run() {
 
             await sock.sendMessage(jid, { text: message });
 
-            console.log(`✅ Message delivered to ${m.name}`);
+            console.log(`✅ Message delivered to ${m.name} (${m.admissionNumber}).`);
 
             const waitTime = Math.floor(Math.random() * 15001) + 15000;
             if (index < dashboardMembers.length - 1) {
