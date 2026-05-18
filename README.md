@@ -31,7 +31,7 @@ The bot requires the following environment variables to be set (either in a `.en
 ### 2. Local Installation
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/SVignesh03/RSV-whatsapp-bot.git
 
 # Install dependencies
 npm install
